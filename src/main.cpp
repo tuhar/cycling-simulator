@@ -6,12 +6,12 @@
 
 int main(int argc, char const *argv[]) {
     Team jumbo = Team("Jumbo visma");
-    jumbo.addRider(Rider(1,"Joonas", 69, 300, 2500));
-    jumbo.addRider(Rider(2,"Sepp Kuss", 62, 290, 6000));
+    jumbo.addRider(Rider(1,"Joonas", 69, 600, 2500000));
+    jumbo.addRider(Rider(2,"Sepp Kuss", 62, 290, 10, 4));
 
     Team redbull = Team("Redbull");
     redbull.addRider(Rider(3,"Roglic", 65, 300, 6000));
-    redbull.addRider(Rider(4,"Wout van Aert", 70, 310, 6000));
+    redbull.addRider(Rider(4,"Wout van Aert", 70, 310, 600, 6));
 
     Segment easyStart = Segment(0, 1000);
     Segment slightlyUp = Segment(1, 3000);
