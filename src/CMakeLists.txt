@@ -4,6 +4,7 @@ add_library(CyclingSimulatorLib
     Route.cpp
     Segment.cpp
     Team.cpp
+    mainECS.cpp
 )
 target_include_directories(CyclingSimulatorLib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(CyclingSimulatorLib PUBLIC cxx_std_20)
