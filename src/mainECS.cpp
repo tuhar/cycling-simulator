@@ -527,8 +527,8 @@ struct CyclingSimulator {
 
     void init() {
         window.create(sf::VideoMode({800, 600}), "Cycling Simulator");
-        mainCamera.setCenter({800.f, 300.f});
-        mainCamera.setSize({3200.f, 2400.f});
+        mainCamera.setCenter({400.f, 300.f});
+        mainCamera.setSize({800.f, 600.f});
         mainCamera.setViewport(sf::FloatRect({0.f, 0.f}, {1.f,1.f}));
 
         hudView.setCenter({400.f, 300.f});
@@ -537,7 +537,7 @@ struct CyclingSimulator {
 
         window.setView(mainCamera);
 
-        if (!font.openFromFile("fonts/Arial.ttf")){
+        if (!font.openFromFile("../../fonts/Arial.ttf")){
             std::runtime_error("Could not load font from file!");
         };
 
@@ -560,18 +560,22 @@ struct CyclingSimulator {
         
         //load level
         
-        std::ifstream file("/home/tuhar/workspace/GameDev/CyclingSimulator/levels/komEtape.txt");
+        std::ifstream file("../../levels/komEtape.txt");
         size_t meshSize = 2+2*15;
+        routeMesh.setPrimitiveType(sf::PrimitiveType::TriangleStrip);
         routeMesh.resize(meshSize); //todo read segment count and init segments in one loop if possible
-        float lowestPoint = 0.f;
-        routeMesh[0].position = sf::Vector2f(0.f, 500.f);
+
+        float currentElevation = 500.f;
+        float currentBedrock = 520.f;
+        routeMesh[0].position = sf::Vector2f(0.f, currentElevation);
         routeMesh[0].color = sf::Color::Green;
-        routeMesh[1].position = sf::Vector2f(0.f, -1 * lowestPoint + 520.f);
-        routeMesh[1].color = sf::Color::Green;
+        routeMesh[1].position = sf::Vector2f(0.f, currentBedrock);
+        routeMesh[1].color = sf::Color::Red;
 
         std::string line;
         std::vector<Entity> segments;
         int i = 2;
+        float totalLength = 0;
         while(std::getline(file, line)) {
             std::istringstream segment(line);
             std::string part;
@@ -581,33 +585,33 @@ struct CyclingSimulator {
             }
             float length = segmentParts[0];
             float grade = segmentParts[1]/100;
-            segments.push_back(createSegment("Name", length, segmentParts[1]));
+            segments.push_back(createSegment("Name", length, segmentParts[1])); //todo name the segments?
             float elevation = length * grade;
-            if (elevation < lowestPoint) {
-                lowestPoint = elevation;
+            currentElevation += -1 * elevation;
+            if (currentElevation > currentBedrock) {
+                currentBedrock = currentElevation + 20.f;
                 for (size_t j = 1; j < i; j+=2){
-                    routeMesh[j].position.y += elevation; 
+                    routeMesh[j].position.y = currentBedrock; 
                 }                
             }
             float x = sqrt(length*length - elevation*elevation);
-            float y = -1*elevation;
             
-            routeMesh[i].position = sf::Vector2f(x, y + 500.f);
+            routeMesh[i].position = sf::Vector2f(x + totalLength, currentElevation);
+            std::cout << std::format("{} elevation vertex [{:.3f}, {:.3f}]",i, x, currentElevation) << std::endl;
             routeMesh[i++].color = sf::Color::Green;
-            routeMesh[i].position = sf::Vector2f(x, -1*lowestPoint + 520.f);
-            routeMesh[i++].color = sf::Color::Green;
-
+            routeMesh[i].position = sf::Vector2f(x + totalLength, currentBedrock);
+            std::cout << std::format("{} bedrock vertex [{:.3f},{:.3f}]",i, x, currentBedrock) << std::endl;
+            routeMesh[i++].color = sf::Color::Red;
+            totalLength += x;
         }
 
-        Entity firstSemgnet = createSegment("Dedinka vo Flandroch", 10000, 0);
-        Entity krpa = createSegment("Krpal", 5000, 6);
-        joinSegment(firstSemgnet, krpa);
-        Entity downhill = createSegment("Serpentinky", 5000, -3);
-        joinSegment(krpa, downhill);
-        Entity flat = createSegment("Rovinecka", 15000, 0);
-        joinSegment(downhill, flat);
-        Entity kom = createSegment("Alp'duez", 17000, 12);
-        joinSegment(flat, kom);
+        i = 0;
+        while (i < segments.size() -1) {
+            joinSegment(segments.at(i), segments.at(i+1));
+            i++;
+        }
+
+        Entity firstSemgnet = segments[0];
         
         //prepare riders
         createRider("Joonas", 69, 400, 2500000, firstSemgnet, font, 0, sf::Color::Yellow);
@@ -646,6 +650,7 @@ struct CyclingSimulator {
                                 
                 window.clear(sf::Color::Black); 
                 rs.render(window, cm, mainCamera, hudView);
+                window.draw(routeMesh);
                 window.display();
 
                 level.raceTime += dt;

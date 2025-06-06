@@ -11,4 +11,5 @@ add_subdirectory(src)
 add_custom_target(
     run ALL,
     COMMAND CyclingSimulator
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
 )
