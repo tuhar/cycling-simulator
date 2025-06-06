@@ -537,7 +537,7 @@ struct CyclingSimulator {
 
         window.setView(mainCamera);
 
-        if (!font.openFromFile("/home/tuhar/workspace/GameDev/CyclingSimulator/fonts/Arial.ttf")){
+        if (!font.openFromFile("fonts/Arial.ttf")){
             std::runtime_error("Could not load font from file!");
         };
 
