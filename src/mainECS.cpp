@@ -97,6 +97,13 @@ struct EnergyComponent {
 
 struct SpeedComponent {
     float speed = 0.1;
+    sf::Vector2f velocity = {0,0};
+};
+
+struct PositionComponent {
+    sf::Vector2f position;
+    
+    PositionComponent(sf::Vector2f position): position(position){};
 };
 
 struct DistanceComponent {
@@ -139,6 +146,7 @@ enum ComponentType {
     NEXT_SEGMENT = 1 << 7,
     SEGMENT = 1 << 8,
     RENDER = 1 << 9,
+    POSITION = 1 << 10,
 };
 
 template<typename Component>
@@ -296,7 +304,7 @@ struct SystemManager {
 };
 
 struct SpeedSystem: System {
-    UpdateView<RiderComponent, DistanceComponent, SpeedComponent, FatigueComponent> updateView;    
+    UpdateView<RiderComponent, DistanceComponent, SpeedComponent, FatigueComponent, PositionComponent> updateView;    
     SpeedSystem(EntityManager& em, ComponentManager& cm): System(em, cm, RIDER | DISTANCE | SPEED | FATIGUE){};
 
     void update(float dt, LevelDetails& level) {
@@ -306,12 +314,18 @@ struct SpeedSystem: System {
                 SegmentComponent& segment = cm.getComponent<SegmentComponent>(distance->segment);
                 SpeedComponent* speed = updateView.getComponent<SpeedComponent>().at(i);
                 FatigueComponent* fatigue = updateView.getComponent<FatigueComponent>().at(i);
+                PositionComponent* position = updateView.getComponent<PositionComponent>().at(i);
 
                 float completition = (distance->distanceRemainingTotal/level.routeLenght) * 100; //todo fix inverted distance
                 float powerOutput = getPowerOutput(rider, fatigue, completition);
                 float fResist = getFgravity(segment, rider) + getFrolling(segment, rider) + getFdrag(segment, speed);
                 float acceleration = (powerOutput / (rider->weight * speed->speed)) - (fResist / rider->weight);
                 speed->speed += dt * acceleration;
+                speed->velocity = {
+                    speed->speed * cos(segment.theta) * dt,
+                    -1*speed->speed * sin(segment.theta) * dt
+                };
+                position->position+=speed->velocity;
 
                 //when more complex move to its own system
                 double coveredDistance = speed->speed * dt;
@@ -328,7 +342,8 @@ struct SpeedSystem: System {
         auto& distance = cm.getComponent<DistanceComponent>(entity);
         auto& speed = cm.getComponent<SpeedComponent>(entity);
         auto& fatigue = cm.getComponent<FatigueComponent>(entity);
-        updateView.add(entity, &rider, &distance, &speed, &fatigue);
+        auto& position = cm.getComponent<PositionComponent>(entity);
+        updateView.add(entity, &rider, &distance, &speed, &fatigue, &position);
     };
     void removeEntityFromView(Entity entity) {
         updateView.remove(entity);
@@ -468,40 +483,32 @@ struct FatigueSystem: System {
         }
 };
 
-struct RenderSegmentSystem {
-    UpdateView<SegmentComponent> updateView;
-
-    void render(sf::RenderWindow& window, ComponentManager& cm, sf::View& camera) {
-        for (size_t i = 0; i < updateView.entities.size(); i++) {
-            Entity& entity = updateView.entities.at(i);
-            SegmentComponent* segment = updateView.getComponent<SegmentComponent>().at(i);
-        }
-    }
-};
-
 struct RenderSystem {
-    UpdateView<SpeedRenderComponent, SpeedComponent> updateView;
+    UpdateView<SpeedRenderComponent, SpeedComponent, PositionComponent> updateView;
 
-    void render(sf::RenderWindow& window, ComponentManager& cm, sf::View& camera, sf::View& hud) {
+    void render(sf::RenderWindow& window, ComponentManager& cm, sf::View& camera, sf::View& hud, float dt) {
         for (size_t i = 0; i < updateView.entities.size(); i++) {
             Entity& entity = updateView.entities.at(i);
             SpeedRenderComponent* text = updateView.getComponent<SpeedRenderComponent>().at(i);
             SpeedComponent* speed = updateView.getComponent<SpeedComponent>().at(i);
+            PositionComponent* position = updateView.getComponent<PositionComponent>().at(i);
+
             NameComponent& name = cm.getComponent<NameComponent>(entity);
             EnergyComponent& energy = cm.getComponent<EnergyComponent>(entity);
             FatigueComponent& fatigue = cm.getComponent<FatigueComponent>(entity);
             DistanceComponent& distance = cm.getComponent<DistanceComponent>(entity);
+            SegmentComponent& segment = cm.getComponent<SegmentComponent>(distance.segment);
             // text->text.setString(std::format("{} speed: {:.1f} km/h, power output: {:.3f}W, energy left: G: {:.1f}J, Y: {:.1f}J, R: {:.1f}J, B: {:.1f}J", name.name, speed->speed * 3.6, fatigue.powerOutput, energy.green, energy.yellow, energy.red, energy.black));
             window.setView(hud);
             text->text.setString(std::format("{} speed: {:.1f} km/h, power output: {:.3f}W, remaining: {:.1f} m", name.name, speed->speed * 3.6, fatigue.powerOutput, distance.distanceRemainingTotal)); 
             window.draw(text->text);
             
             window.setView(camera);
+            
             if (distance.coveredDistance > 0) { //todo refactor so that rider is no longer rendered
-                text->sprite.move({distance.coveredDistance, 0.f});
+                text->sprite.setPosition(position->position);
                 if (camera.getCenter().x < text->sprite.getPosition().x) {    
-                    camera.move({distance.coveredDistance, 0.f});
-                    // window.setView(camera);
+                    camera.setCenter(position->position); //what is better setPosition or move 
                 }
             }
             window.draw(text->sprite);
@@ -522,13 +529,16 @@ struct CyclingSimulator {
     RenderSystem rs;
 
     float dt = 0.1f;
+
+    float startElevation = 500.f;
     LevelDetails level;
     sf::VertexArray routeMesh;
 
     void init() {
         window.create(sf::VideoMode({800, 600}), "Cycling Simulator");
+        
         mainCamera.setCenter({400.f, 300.f});
-        mainCamera.setSize({800.f, 600.f});
+        mainCamera.setSize({1600.f, 1200.f});
         mainCamera.setViewport(sf::FloatRect({0.f, 0.f}, {1.f,1.f}));
 
         hudView.setCenter({400.f, 300.f});
@@ -552,72 +562,22 @@ struct CyclingSimulator {
         cm.registerComponent<NextSegmentComponent>();
         cm.registerComponent<SegmentComponent>();
         cm.registerComponent<SpeedRenderComponent>();
+        cm.registerComponent<PositionComponent>();
 
         //register systems, order is important (it is the update order)
         sm.registerSystem<SpeedSystem>(em, cm);
         sm.registerSystem<FatigueSystem>(em, cm);
         sm.registerSystem<SegmentSystem>(em, cm);
         
-        //load level
+        Entity firstSemgnet = loadLevel("../../levels/komEtape.txt");
         
-        std::ifstream file("../../levels/komEtape.txt");
-        size_t meshSize = 2+2*15;
-        routeMesh.setPrimitiveType(sf::PrimitiveType::TriangleStrip);
-        routeMesh.resize(meshSize); //todo read segment count and init segments in one loop if possible
-
-        float currentElevation = 500.f;
-        float currentBedrock = 520.f;
-        routeMesh[0].position = sf::Vector2f(0.f, currentElevation);
-        routeMesh[0].color = sf::Color::Green;
-        routeMesh[1].position = sf::Vector2f(0.f, currentBedrock);
-        routeMesh[1].color = sf::Color::Red;
-
-        std::string line;
-        std::vector<Entity> segments;
-        int i = 2;
-        float totalLength = 0;
-        while(std::getline(file, line)) {
-            std::istringstream segment(line);
-            std::string part;
-            std::vector<float> segmentParts;
-            while(std::getline(segment, part, ' ')) {
-                segmentParts.push_back(std::stof(part));
-            }
-            float length = segmentParts[0];
-            float grade = segmentParts[1]/100;
-            segments.push_back(createSegment("Name", length, segmentParts[1])); //todo name the segments?
-            float elevation = length * grade;
-            currentElevation += -1 * elevation;
-            if (currentElevation > currentBedrock) {
-                currentBedrock = currentElevation + 20.f;
-                for (size_t j = 1; j < i; j+=2){
-                    routeMesh[j].position.y = currentBedrock; 
-                }                
-            }
-            float x = sqrt(length*length - elevation*elevation);
-            
-            routeMesh[i].position = sf::Vector2f(x + totalLength, currentElevation);
-            std::cout << std::format("{} elevation vertex [{:.3f}, {:.3f}]",i, x, currentElevation) << std::endl;
-            routeMesh[i++].color = sf::Color::Green;
-            routeMesh[i].position = sf::Vector2f(x + totalLength, currentBedrock);
-            std::cout << std::format("{} bedrock vertex [{:.3f},{:.3f}]",i, x, currentBedrock) << std::endl;
-            routeMesh[i++].color = sf::Color::Red;
-            totalLength += x;
-        }
-
-        i = 0;
-        while (i < segments.size() -1) {
-            joinSegment(segments.at(i), segments.at(i+1));
-            i++;
-        }
-
-        Entity firstSemgnet = segments[0];
         
         //prepare riders
-        createRider("Joonas", 69, 400, 2500000, firstSemgnet, font, 0, sf::Color::Yellow);
-        createRider("Pogi", 66, 450, 2250000, firstSemgnet, font, 20, sf::Color::White);
-        createRider("MvP", 75, 400, 2000000, firstSemgnet, font, 40, sf::Color::Red);
-        createRider("Remco", 73, 400, 1950000, firstSemgnet, font, 60, sf::Color::Green);        
+        createRider("Joonas", 69, 400, 2500000, firstSemgnet, font, 0, startElevation -40, sf::Color::Yellow);
+        createRider("Pogi", 66, 450, 2250000, firstSemgnet, font, 20, startElevation - 40, sf::Color::White);
+        createRider("MvP", 75, 400, 2000000, firstSemgnet, font, 40, startElevation - 40, sf::Color::Red);
+        createRider("Remco", 73, 400, 1950000, firstSemgnet, font, 60, startElevation - 40, sf::Color::Green);     
+        createRider("Roglic", 76, 450, 210000, firstSemgnet, font, 80, startElevation -40, sf::Color::Blue);
         // std::random_device rd;
         // std::mt19937 gen(rd());
         // std::uniform_int_distribution<> weight(60, 90);
@@ -649,8 +609,8 @@ struct CyclingSimulator {
                 sm.updateComponentMask(em);
                                 
                 window.clear(sf::Color::Black); 
-                rs.render(window, cm, mainCamera, hudView);
                 window.draw(routeMesh);
+                rs.render(window, cm, mainCamera, hudView, dt);
                 window.display();
 
                 level.raceTime += dt;
@@ -662,7 +622,7 @@ struct CyclingSimulator {
                 // auto simulationStop = std::chrono::high_resolution_clock::now();
                 // std::chrono::duration<double, std::milli> duration = simulationStop - simulationStart;
                 int i = 1;
-                window.clear(sf::Color::Black);
+                // window.clear(sf::Color::Black);
                 window.setView(hudView);
                 text.setPosition(sf::Vector2f(0,0));
                 for (const auto& entity : level.classification) {
@@ -701,7 +661,7 @@ struct CyclingSimulator {
             em.entityComponentMask.at(currentSegment).nextFrame &= NEXT_SEGMENT;
         }
 
-        void createRider(std::string name, float weight, float ftp, float energy, Entity firstSegment, sf::Font& font, float y, sf::Color color){
+        void createRider(std::string name, float weight, float ftp, float energy, Entity firstSegment, sf::Font& font, float y, float startingElevation, sf::Color color){
             Entity riderId = em.createEntity(NAME | RIDER | SPEED | DISTANCE | FATIGUE | ENERGY | RENDER);
             cm.addComponent<NameComponent>(riderId, NameComponent(name));
             cm.addComponent<RiderComponent>(riderId, RiderComponent(weight, ftp));
@@ -711,20 +671,84 @@ struct CyclingSimulator {
             cm.addComponent<DistanceComponent>(riderId, DistanceComponent(firstSegment, firstSegmentC.length, level.routeLenght));
             cm.addComponent<FatigueComponent>(riderId, FatigueComponent(ftp));
             cm.addComponent<EnergyComponent>(riderId, EnergyComponent(ftp, energy));
+            cm.addComponent<PositionComponent>(riderId, PositionComponent({0.f, startingElevation}));
             
             sf::Text text(font);
             text.setPosition({0, y});
             text.setCharacterSize(12);
 
             sf::CircleShape sprite(20.f);
-            sprite.setPosition({0.f, y+100.f});
             sprite.setFillColor(color);
+            sprite.setPosition(cm.getComponent<PositionComponent>(riderId).position);
             cm.addComponent<SpeedRenderComponent>(riderId, SpeedRenderComponent(text, sprite));    
-            rs.updateView.add(riderId, &cm.getComponent<SpeedRenderComponent>(riderId), &cm.getComponent<SpeedComponent>(riderId));
+            rs.updateView.add(riderId, &cm.getComponent<SpeedRenderComponent>(riderId), &cm.getComponent<SpeedComponent>(riderId), &cm.getComponent<PositionComponent>(riderId));
 
             level.ridersOnRoute.emplace(riderId);
         }
-};
+        
+        Entity loadLevel(const std::string& levelPath) {
+            std::ifstream file(levelPath);
+            std::string l;
+            size_t lines = 0;
+            while (std::getline(file, l)) {
+                lines++;
+            }
+            size_t meshSize = 2+2*lines;
+            routeMesh.setPrimitiveType(sf::PrimitiveType::TriangleStrip);
+            routeMesh.resize(meshSize); //todo read segment count and init segments in one loop if possible
+
+            
+            float currentElevation = 500.f;
+            float currentBedrock = 520.f;
+            routeMesh[0].position = sf::Vector2f(0.f, currentElevation);
+            routeMesh[0].color = sf::Color::Green;
+            routeMesh[1].position = sf::Vector2f(0.f, currentBedrock);
+            routeMesh[1].color = sf::Color::Red;
+
+            file.clear();
+            file.seekg(0, std::ios::beg);
+            std::string line;
+            std::vector<Entity> segments;
+            int i = 2;
+            float totalLength = 0;
+            while(std::getline(file, line)) {
+                std::istringstream segment(line);
+                std::string part;
+                std::vector<float> segmentParts;
+                while(std::getline(segment, part, ' ')) {
+                    segmentParts.push_back(std::stof(part));
+                }
+                float length = segmentParts[0];
+                float grade = segmentParts[1]/100;
+                segments.push_back(createSegment("Name", length, segmentParts[1])); //todo name the segments?
+                float elevation = length * grade;
+                currentElevation += -1 * elevation;
+                if (currentElevation > currentBedrock) {
+                    currentBedrock = currentElevation + 20.f;
+                    for (size_t j = 1; j < i; j+=2){
+                        routeMesh[j].position.y = currentBedrock; 
+                    }                
+                }
+                float x = sqrt(length*length - elevation*elevation);
+                
+                routeMesh[i].position = sf::Vector2f(x + totalLength, currentElevation);
+                std::cout << std::format("{} elevation vertex [{:.3f}, {:.3f}]",i, x, currentElevation) << std::endl;
+                routeMesh[i++].color = sf::Color::Green;
+                routeMesh[i].position = sf::Vector2f(x + totalLength, currentBedrock);
+                std::cout << std::format("{} bedrock vertex [{:.3f},{:.3f}]",i, x, currentBedrock) << std::endl;
+                routeMesh[i++].color = sf::Color::Red;
+                totalLength += x;
+            }
+
+            i = 0;
+            while (i < segments.size() -1) {
+                joinSegment(segments.at(i), segments.at(i+1));
+                i++;
+            }
+
+            return segments[0];
+        }
+    };
 
 int main(int argc, char const *argv[])
 {
