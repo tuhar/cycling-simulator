@@ -5,6 +5,7 @@ project(CyclingSimulatorLib VERSION 0.0.1
                 LANGUAGES CXX)
 
 find_package(SFML 3.0 REQUIRED COMPONENTS Graphics Window System)
+find_package(fmt REQUIRED)
 
 add_subdirectory(src)
 
