@@ -367,9 +367,9 @@ struct SpeedSystem {
                 float fResist = distance->fGravity + distance->fRolling + getFdrag(segment, speed);
                 float acceleration = (powerOutput / (rider->weight * speed->speed)) - (fResist / rider->weight);
                 speed->speed += dt * acceleration;
-                speed->velocity.x = speed->speed * segment->cosTheta * dt;
-                speed->velocity.y = -1*speed->speed * segment->sinTheta * dt;
-                position->position+=speed->velocity;
+                speed->velocity.x = speed->speed * segment->cosTheta;
+                speed->velocity.y = -1*speed->speed * segment->sinTheta;
+                position->position+=speed->velocity * dt;
 
                 //when more complex move to its own system
                 double coveredDistance = speed->speed * dt;
@@ -524,7 +524,7 @@ struct RenderSystem {
             FatigueComponent& fatigue = *fatigueStorage.get(entity);
             DistanceComponent& distance = *distanceStorage.get(entity);
             fmt::memory_buffer buf;
-            fmt::format_to(std::back_inserter(buf), "{} speed: {:.1f} km/h, power output: {:.3f}W, remaining: {:.1f} m", name.name, speed->speed, fatigue.powerOutput, distance.distanceRemainingTotal);
+            fmt::format_to(std::back_inserter(buf), "{} speed: {:.1f} km/h, power output: {:.3f}W, remaining: {:.1f} m, fgravity: {:.1f}, frolling: {:.1f}", name.name, speed->speed * 3.6f, fatigue.powerOutput, distance.distanceRemainingTotal, distance.fGravity, distance.fRolling);
             text->text.setString(std::string(buf.data(), buf.size()));
             window.draw(text->text);
         }
@@ -554,7 +554,8 @@ struct CyclingSimulator {
     EntityManager em;
     RenderSystem rs;
 
-    float dt = 0.1f;
+    float dt = 0.01f;
+    float simulationSpeed = 1.0f;
 
     float startElevation = 500.f;
     LevelDetails level;
@@ -585,56 +586,65 @@ struct CyclingSimulator {
         createRider("MvP", 75, 400, 2000000, firstSemgnet, font, 40, startElevation - 40, sf::Color::Red);
         createRider("Remco", 73, 400, 1950000, firstSemgnet, font, 60, startElevation - 40, sf::Color::Green);     
         createRider("Roglic", 76, 450, 210000, firstSemgnet, font, 80, startElevation -40, sf::Color::Blue);
-        std::random_device rd;
-        std::mt19937 gen(rd());
-        std::uniform_int_distribution<> weight(60, 90);
-        std::uniform_int_distribution<> ftp(300, 470);
-        std::uniform_int_distribution<> energy(2500000, 3000000);
-        for (int i = 0; i < 10; i++) {
-            createRider("Rider"+std::to_string(i), weight(gen), ftp(gen), energy(gen), firstSemgnet, font, (80 + i*20), startElevation -40, sf::Color::Cyan);
-        }
+        // std::random_device rd;
+        // std::mt19937 gen(rd());
+        // std::uniform_int_distribution<> weight(60, 90);
+        // std::uniform_int_distribution<> ftp(300, 470);
+        // std::uniform_int_distribution<> energy(2500000, 3000000);
+        // for (int i = 0; i < 1; i++) {
+        //     createRider("Rider"+std::to_string(i), weight(gen), ftp(gen), energy(gen), firstSemgnet, font, (80 + i*20), startElevation -40, sf::Color::Cyan);
+        // }
     }
 
     void run() {
         sf::Text text(font);
+
+        auto currentTime = std::chrono::high_resolution_clock::now();
+        double accumulator = 0.0;
         while(window.isOpen()) {            
 
                 while(const std::optional event = window.pollEvent()) {
                     if (event->is<sf::Event::Closed>()){
                         window.close();
                     }
-                    //todo handle input
+                    if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()){
+                        if (keyPressed->scancode == sf::Keyboard::Scan::Right) {
+                            if (simulationSpeed < 100) {
+                                simulationSpeed += 5.0f;
+                            }
+                        }
+                        if (keyPressed->scancode == sf::Keyboard::Scan::Left) {
+                            if (simulationSpeed > 1) {
+                                simulationSpeed -= 5.0f;
+                            }
+                        }
+                    }
                 }
 
             
             if (!level.ridersOnRoute.empty()) { //todo - can be determined from Distance/Speed component after the refactor?
-                auto speedStart = std::chrono::high_resolution_clock::now();                
-                SpeedSystem::update(cm, dt, level);
-                auto speedStop = std::chrono::high_resolution_clock::now();
-                auto updateStart = std::chrono::high_resolution_clock::now();
+                auto newTime = std::chrono::high_resolution_clock::now();
+                std::chrono::duration<double> frameTime = newTime - currentTime;
+                currentTime = newTime;
+
+                accumulator += frameTime.count() * simulationSpeed;
+                // std::cout << "frametime: " << frameTime << ", accumulator " << accumulator << std::endl;
+    
+                while (accumulator >= dt) {  
+                    SpeedSystem::update(cm, dt, level);
+                    accumulator -= dt;
+                    level.raceTime += dt;
+                }
                 FatigueSystem::update(cm);
                 SegmentSystem::update(cm, level);
-                                
-                auto updateStop = std::chrono::high_resolution_clock::now();
-                auto renderStart = std::chrono::high_resolution_clock::now();
                 
                 window.clear(sf::Color::Black); 
                 window.draw(routeMesh);
                 rs.render(window, cm, mainCamera, hudView);
                 window.display();
-
-                level.raceTime += dt;
-                auto renderStop = std::chrono::high_resolution_clock::now();
-                std::chrono::duration<double, std::milli> speedDuration = speedStop - speedStart;
-                std::chrono::duration<double, std::milli> updateDuration = updateStop - updateStart;
-                std::chrono::duration<double, std::milli> renderDuration = renderStop - renderStart;
-                std::cout << "speed update" << speedDuration.count() << " ms" << "update time: " << updateDuration.count() << " ms" << ", render time: " << renderDuration.count() << " ms" << std::endl;
             }
             if (level.ridersOnRoute.empty() && !level.finished) {
-                // auto simulationStop = std::chrono::high_resolution_clock::now();
-                // std::chrono::duration<double, std::milli> duration = simulationStop - simulationStart;
                 int i = 1;
-                // window.clear(sf::Color::Black);
                 window.setView(hudView);
                 text.setPosition(sf::Vector2f(0,0));
                 for (const auto& entity : level.classification) {
@@ -642,14 +652,9 @@ struct CyclingSimulator {
                     auto& energy = *cm.get<EnergyComponent>().get(entity);
                     text.setString(std::to_string(i++) = ". place: " + name.name + " energy left: " + std::to_string(energy.green) + "J" + "\n");
 
-                    text.setPosition(text.getPosition()+sf::Vector2f(0, i * 10));
-                    //todo new line?
-                    
+                    text.setPosition(text.getPosition()+sf::Vector2f(0, i * 10));                    
                     window.draw(text);
-                    // std::cout << i++ << ". place: " << name.name << " energy left: " << energy.green << "J" << std::endl;
                 }
-                // std::cout << "Simulation took: " << duration.count() << "ms " << std::endl;
-                // text.setString("Simulation took: " + std::to_string(duration.count()) + "ms ");
                 text.setCharacterSize(16);
                 window.draw(text);
                 window.display();
