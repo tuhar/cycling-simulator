@@ -7,7 +7,9 @@ project(CyclingSimulatorLib VERSION 0.0.1
 find_package(SFML 3.0 REQUIRED COMPONENTS Graphics Window System)
 find_package(fmt REQUIRED)
 
+enable_testing()
 add_subdirectory(src)
+add_subdirectory(test)
 
 add_custom_target(
     run ALL,

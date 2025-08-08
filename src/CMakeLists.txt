@@ -1,10 +1,6 @@
 add_library(CyclingSimulatorLib
-    Energy.cpp
-    Rider.cpp
-    Route.cpp
-    Segment.cpp
-    Team.cpp
-    mainECS.cpp
+    ecs/SparseSet.cpp
+    ecs/SparseSet.hpp
 )
 target_include_directories(CyclingSimulatorLib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(CyclingSimulatorLib PUBLIC cxx_std_20)
